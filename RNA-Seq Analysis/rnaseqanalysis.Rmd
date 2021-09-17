@@ -1,0 +1,241 @@
+---
+title: "RNA-Seq Analysis"
+author: "Erica Lam"
+date: "`r format(Sys.time(),'%Y %B %d')`"
+output: 
+  html_document:
+    theme: paper
+    code_folding: hide
+---
+
+```{r setup, include=FALSE, warning=FALSE, fig.align='center'}
+knitr::opts_chunk$set(echo = TRUE)
+library(DESeq2)
+library(readr)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(EnhancedVolcano)
+library(pheatmap)
+library(PoiClaClu)
+library(tidyverse)
+library(msigdbr)
+library(clusterProfiler)
+library(ggpubr)
+library(gridExtra)
+```
+
+## Introduction
+This report seeks to answer how the Bcl6 transcriptional repressor functions in the immune system. 
+
+Two conditions were assessed in triplicates. Endogenous Bcl6-depleted OCI-LY1 cells were rescued with either WT Bcl6 or RD mutant Bcl6. Mutant RD2 domain disrupts Bcl6 repressor function. RD2 domain is essential for pre-GC B cell differentiation and clustering into nascent GC within follicles. Here, RD2 is repressed by repressing key trafficking receptors S1pr1 and Gpr183 through Hdac2 recruitment.
+
+The dataset (SRP043078) was obtained using recount2 and was loaded with its metadata here:
+```{r data, class.source = "fold-show", results='hide'}
+# load in data (SRP043078)
+load("Datasets/rse_gene.Rdata")
+
+# sample info; add prefix to column names
+sra <- read.csv("Datasets/SraRunTable.txt")
+colnames(sra) <- paste0("sra_", colnames(sra))
+# choose variable
+sra_var <- paste0("sra_", "Genotype")
+# reorganize and append
+sra <- sra[match(colData(rse_gene)$run, sra$sra_Run), ]
+
+condition <- sra[, sra_var]
+colData(rse_gene) <- cbind(colData(rse_gene), condition)
+dim(colData(rse_gene))
+colData(rse_gene)[, 1:ncol(colData(rse_gene))]
+```
+
+## DESeq analysis
+The top statistically significant DEGs are shown:
+```{r DESeq2, warning=FALSE, message=FALSE}
+# SE to DDS
+dds <- DESeqDataSet(rse_gene, ~condition)
+
+# perform DE analysis and get result out... log2(mutant/WT)
+dds$condition <- relevel(dds$condition, ref = "siBCL6;etopic expression of WT BCL6")
+dds <- DESeq(dds)
+res <- results(dds, contrast = c("condition", "siBCL6;etopic expression of BCL6 RD2 mutant", "siBCL6;etopic expression of WT BCL6"))
+
+# normalize
+resapeglm <- lfcShrink(dds = dds, type = "apeglm", coef = 2)
+
+# create results table and annotate genes
+write.table(resapeglm, file = "allgenes_adjp0.01_lfc1_bm20.txt", 
+            sep = "\t", col.names = TRUE, row.names = TRUE)
+
+row.names(resapeglm) <- gsub("\\..*","",row.names(resapeglm))
+
+anno <- AnnotationDbi::select(org.Hs.eg.db, rownames(resapeglm),
+                              columns=c("ENSEMBL", "ENTREZID", "SYMBOL", "GENENAME"), 
+                              keytype="ENSEMBL")
+resapeglm <- cbind(ENSEMBL = rownames(resapeglm), resapeglm)
+anno_res <- left_join(as.data.frame(resapeglm), anno)
+
+# filter criteria for statistically significant results
+pThr        <- 0.01   
+logFCThr    <- 1      
+baseMeanThr <- 20   
+
+idx <- which(anno_res$padj <= pThr & 
+              abs(anno_res$log2FoldChange) >= logFCThr & 
+              anno_res$baseMean >= baseMeanThr)
+anno_sigres <- anno_res[idx, ]
+
+DT::datatable(anno_sigres, class = "hover", options = list(scrollX = TRUE))
+```
+
+
+## Data quality
+Replicates of the samples are observed to cluster well together and suggest the experimental conditions to be a major cause of variation.
+```{r PCAplot}
+row.names(dds) <- gsub("\\..*","",row.names(dds))
+rld <- rlog(dds)
+plotPCA(rld, intgroup = "condition")
+```
+
+## Top DEGs
+
+```{r volcanoplot, warning=FALSE}
+EnhancedVolcano(anno_res, lab = anno_res$SYMBOL, x = "log2FoldChange", 
+                y = "padj", border = "full", borderWidth = 1.5, borderColour = "black",
+                gridlines.major = FALSE, gridlines.minor = FALSE, title = "RD Mutant Bcl6 vs WT Bcl6",
+                pCutoff = 10e-5, FCcutoff = 2)
+```
+
+The top up-regulated and down-regulated DEGS ordered by LFC are shown, respectively. 
+
+### Over-expressed DEGs
+The expression of the top up-regulated genes are at least 10.0 fold higher in RD mutant Bcl6 cells compared to WT Bcl6 cells. Of the few identified gene names, the over-expressed genes in mutated RD2 Bcl6 contain pseudogene transcripts. Little research has been done for the following genes but are mentioned below:
+
+ENSG00000225906 is a FKBP associated protein (GLMN) pseudogene (1).
+LINC01626 is an IncRNA (2).
+MTND5P2 is a mitochondrially encoded NADH pseudogene (3).
+KRTAP9-7 is associated with developmental biology and keratinization (4).
+LOC102723883 is an IncRNA (5).
+
+(1) https://www.genecards.org/cgi-bin/carddisp.pl?gene=ENSG00000225906
+(2) https://www.genecards.org/cgi-bin/carddisp.pl?gene=LINC01626 
+(3) https://www.genecards.org/cgi-bin/carddisp.pl?gene=MTND5P2
+(4) https://www.genecards.org/cgi-bin/carddisp.pl?gene=KRTAP9-7
+(5) https://www.genecards.org/cgi-bin/carddisp.pl?gene=LOC102723883
+
+
+### Under-expressed DEGs
+While several novel transcripts were underexpressed, more-studied genes positively correlate to serine and ion channels in WT Bcl6. The down regulation of MIR200CHG, SPINK13, CAMP, and NAV2 suggests Bcl6 to repress transcription related to cell maturation, proliferation, and migration of inflammatory cells. Negative correlation of the genes in mutant RD2 Bcl6 demonstrate RD2 to play a role in the inhibitive effect of Bcl6 and great division between the conditions.
+
+The top under-expressed genes are listed:
+MIR200CHG regulates YB-1 phosphorylation at serine 102, which can promote tumor cell proliferation, apoptosis, and drug resistance (1).
+SPINK13 is a serine protease inhibitor and is associated with plasminogen deficiency, type I (2). 
+CACNA2D3 encodes for the voltage-gated calcium channel complex, induces apoptosis, and could arrest cell cycle at the G1/S checkpoint (3).
+CAMP is characterized by antimicrobial activity, immune mediator induction, and inflammatory response regulation (4).
+PDZRN3 is related to ubiquitin-protein ligase activity (5).
+NCS1 is a neuronal calcium sensor and is associated with neuron differentiation by inhibiting N-type voltage-gated calcium channel activity (6).
+LINC01987 is an IncRNA (7).
+RAB19 is related to GTPase activity and immunodeficiency 54 (8).
+SCNN1B encodes for the beta subunit of the epithelial nonvoltage-gated sodium channel (9).
+CEROX1 modulates mitochondrial complex I activity (10).
+KIF26B transports organelles with microtubules (11).
+ODAPH encodes a phosphoprotein for enamel mineralization (12).
+NLRP4 negatively regulates autophagy and is important in NF-kB inhibition (13).
+NAV2 is a neuron navigator involved in cellular growth and migration (14).
+ENPP7P8 is a pseudogene (15).
+
+(1) https://www.nature.com/articles/s41523-021-00293-x
+(2) https://www.genecards.org/cgi-bin/carddisp.pl?gene=SPINK13
+(3) https://www.genecards.org/cgi-bin/carddisp.pl?gene=CACNA2D3
+(4) https://www.genecards.org/cgi-bin/carddisp.pl?gene=CAMP
+(5) https://www.genecards.org/cgi-bin/carddisp.pl?gene=PDZRN3
+(6) https://www.genecards.org/cgi-bin/carddisp.pl?gene=NCS1
+(7) https://www.genecards.org/cgi-bin/carddisp.pl?gene=LINC01987
+(8) https://www.genecards.org/cgi-bin/carddisp.pl?gene=RAB19
+(9) https://www.genecards.org/cgi-bin/carddisp.pl?gene=SCNN1B
+(10) https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6542586/
+(11) https://www.genecards.org/cgi-bin/carddisp.pl?gene=KIF26B
+(12) https://www.genecards.org/cgi-bin/carddisp.pl?gene=ODAPH
+(13) https://www.genecards.org/cgi-bin/carddisp.pl?gene=NLRP4
+(14) https://www.genecards.org/cgi-bin/carddisp.pl?gene=NAV2
+(15) https://www.genecards.org/cgi-bin/carddisp.pl?gene=ENPP7P8
+
+
+```{r heatmap}
+# create a heatmap showing the top 20 over- and under-expressed DEGs
+orderedsigres <- anno_sigres[order(anno_sigres$log2FoldChange, decreasing = TRUE), ]
+mat <- assay(rld)
+annotation <- as.data.frame(colData(rld)["condition"])
+id1 <- orderedsigres$ENSEMBL
+id2 <- orderedsigres$SYMBOL
+topDEG <- mat[id1,]
+rownames(topDEG) <- id2
+top20DEG <- head(topDEG, n = 20)
+rownames(annotation) <- colnames(rld)
+
+pheatmap(top20DEG, scale = "row", clustering_distance_rows = "correlation",
+         annotation_col = annotation, main = "Top 20 over-expressed DEGs")
+
+orderedsigres <- anno_sigres[order(anno_sigres$log2FoldChange), ]
+mat <- assay(rld)
+annotation <- as.data.frame(colData(rld)["condition"])
+id1 <- orderedsigres$ENSEMBL
+id2 <- orderedsigres$SYMBOL
+topDEG <- mat[id1,]
+rownames(topDEG) <- id2
+top20DEG <- head(topDEG, n = 20)
+rownames(annotation) <- colnames(rld)
+
+pheatmap(top20DEG, scale = "row", clustering_distance_rows = "correlation",
+         annotation_col = annotation, main = "Top 20 under-expressed DEGs")
+```
+
+## GSEA analysis
+### Top five over-expressed pathways
+
+```{r GSEA, message=FALSE, warning=FALSE}
+# Do GSEA on the results and plot the top 5 pathways
+# arrange by padj
+anno_res2 <- anno_res %>%
+  arrange(padj) %>%
+  mutate(gsea_metric = -log10(padj) * sign(log2FoldChange))
+# get rid of inf from ~0 padj values
+anno_res2 <- anno_res2 %>%
+  mutate(padj = case_when(padj == 0 ~ .Machine$double.xmin,
+                          TRUE ~ padj)) %>%
+  mutate(gsea_metric = -log10(padj) * sign(log2FoldChange))
+# remove NAs and order by GSEA;
+anno_res2 <- anno_res2 %>%
+  filter(! is.na(gsea_metric)) %>%
+  arrange(desc(gsea_metric))
+# ranked GSEA vector
+rnk <- anno_res2 %>%
+  select(SYMBOL, gsea_metric) %>%
+  distinct(SYMBOL, .keep_all = TRUE) %>%
+  deframe()
+# get gene sets
+gene_sets <- msigdbr(species = "Homo sapiens", category = "C7")
+gene_sets <- gene_sets %>%
+  select(gs_name, gene_symbol)
+# run GSEA
+gseares <- GSEA(geneList = rnk, TERM2GENE = gene_sets)
+gseares_df <- as.data.frame(gseares)
+
+# top 5 pathways
+top_pathways <- gseares_df %>%
+  top_n(n = 5, wt = NES) %>%
+  pull(ID)
+
+top_pathways_plot <- lapply(top_pathways, function(pathway){
+  gseaplot(gseares, geneSetID = pathway, title = pathway)
+})
+top_pathways_plot <- ggarrange(plotlist = top_pathways_plot, labels = "AUTO", align = "hv")
+
+ggsave(top_pathways_plot, filename = "top_up_GSEA.png", height = 25, width = 45)
+
+knitr::include_graphics("top_up_GSEA.png")
+```
+
+
+The top over-expressed pathways are based on NES using MSigDB immunologic signature gene sets. They are related to IL-10 activity, lymphocyte development, and pattern recognition receptor (PRR) pathways.
+
+IL-10 is known to downregulate Th1 cytokines and NF-kB activity to enhance B cell survival. In T cell development, TCF-1 suppresses early stage malignant-developing thymocytes. PRRs mediate the initiation of antigen-specific immune response and release of inflammatory cytokines essential for anti-viral defense. These pathways suggest Bcl6 involvement in repressing cell proliferation, inflammatory responses, and lymphocyte development. 

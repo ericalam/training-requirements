@@ -1,0 +1,232 @@
+---
+title: "R for Data Science"
+author: "Erica Lam"
+date: "`r format(Sys.time(),'%Y %B %d')`"
+output: 
+  html_document:
+    theme: paper
+    code_folding: hide
+
+---
+
+```{r setup, include = FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(ggthemes)
+library(plotly)
+library(ggpubr)
+library(moments)
+library(rstatix)
+library(datarium)
+knitr::opts_chunk$set(fig.align = 'center', warning=FALSE, message=FALSE)
+```
+
+### CO2 emissions by GDP per capita 
+```{r scatterplot}
+gapminder <- read_csv("~/R/Projects/Datasets/gapminder_clean.csv", col_names = TRUE)
+
+styling1 <- list(
+  geom_point(),
+  scale_x_log10(),
+  scale_y_log10(),
+  geom_smooth(method = "lm", se = FALSE),
+  theme_classic(), 
+  labs(
+    caption = "Source from Gapminder"
+    )
+  )
+
+gapminder_1962 <- gapminder %>%
+  filter(Year == 1962) 
+
+ggplot(gapminder_1962, aes(gdpPercap, `CO2 emissions (metric tons per capita)`)) + 
+  styling1 +
+  labs(title = "CO2 emissions by GDP per capita in 1962",
+       x = "GDP per capita"
+  )
+```
+
+The Pearson correlation of `'CO2 emissions (metric tons per capita)'` and `gdpPercap` in the year 1962 is 0.926 (p = <2.2e-16).
+```{r pearson}
+cor.test(gapminder_1962$gdpPercap, gapminder_1962$`CO2 emissions (metric tons per capita)`, method = "pearson")
+```
+
+#### Q: In what year is the correlation between `'CO2 emissions (metric tons per capita)'` and `gdpPercap` the strongest?
+
+A: 1967 contains the strongest correlation between `'CO2 emissions (metric tons per capita)'` and `gdpPercap`.
+
+```{r}
+# In what year is the correlation between 'CO2 emissions (metric tons per capita)' and gdpPercap the strongest?
+corr_gapminder <- gapminder %>%
+  group_by(Year) %>%
+  select(gdpPercap, `CO2 emissions (metric tons per capita)`, Year) %>%
+  summarize(corr = cor(gdpPercap, `CO2 emissions (metric tons per capita)`, use = "complete.obs")) %>%
+  arrange(desc(corr))
+
+corr_gapminder
+
+gapminder_1967 <- gapminder %>%
+  filter(Year == 1967)
+
+# interactive scatter plot
+ggplotly(ggplot(gapminder_1967, aes(gdpPercap, `CO2 emissions (metric tons per capita)`, size = pop, color = continent)) + 
+  styling1 +
+  labs(title = "CO2 emissions by GDP per capita in 1967",
+       x = "GDP per capita"
+       )
+  )
+```
+
+
+### Q: What is the relationship between `continent` and `'Energy use (kg of oil equivalent per capita)'`?
+
+A: There is a statistically significant difference [F(4, 516) = 58.316, p = < 2.2e-16] in `Energy use (kg of oil equivalent per capita)` between `continents` as determined by one-way ANOVA. Because R-squared is small (~0.3), there is a weak linear relation between the treatment levels and response.
+
+```{r q1}
+complete_rec <- na.exclude(gapminder)
+LM <- lm(`Energy use (kg of oil equivalent per capita)` ~ continent, data = complete_rec)
+anova(LM)
+summary(LM)
+
+#resid_data <- resid(LM)
+#qqnorm(resid_data, pch = 1, frame = FALSE)
+#qqline(resid_data)
+
+# boxplot
+ggplot(complete_rec, aes(continent, `Energy use (kg of oil equivalent per capita)`)) +
+  geom_boxplot(color = "red", fill = "orange", alpha = 0.2) +
+  theme_classic() +
+  labs(
+    x = "Continent",
+    caption = "Source from Gapminder"
+  )
+
+# summary stats
+complete_rec %>%
+  group_by(continent) %>%
+  get_summary_stats(`Energy use (kg of oil equivalent per capita)`, type = "mean_sd")
+
+# outliers. may try to take out
+complete_rec %>%
+  group_by(continent) %>%
+  identify_outliers(`Energy use (kg of oil equivalent per capita)`) %>%
+  select(continent, is.outlier, is.extreme)
+
+# check for normality; qqplot and shapiro
+ggqqplot(residuals(LM))
+
+shapiro_test(residuals(LM))
+
+# check for normality, but for each group
+ggqqplot(complete_rec, "Energy use (kg of oil equivalent per capita)", facet.by = "continent")
+
+# homogenity of variance
+plot(LM, 1)
+
+complete_rec %>% levene_test(`Energy use (kg of oil equivalent per capita)` ~ continent)
+
+#complete_rec$`Energy use (kg of oil equivalent per capita)` <- log10(complete_rec$`Energy use (kg of oil equivalent per capita)`)
+
+#ggdensity(resid_data, x = "Energy use (kg of oil equivalent per capita)", color = "red", fill = "orange", alpha = 0.2) +
+#  scale_x_continuous() +
+#  stat_overlay_normal_density(color = "red", linetype = "dashed")
+
+
+#shapiro.test(complete_rec$`Energy use (kg of oil equivalent per capita)`)
+
+```
+
+
+### Q: Is there a significant difference between Europe and Asia with respect to `'Imports of goods and services (% of GDP)'` in the years after 1990?
+
+A: The mean ``Imports of goods and services (% of GDP)`` in Asia and Europe is 46.5 (SD = 37.5) and 41.6 (SD = 16.2), respectively. A Welch two-sample t-test demonstrates there is no statistically significant difference [t(91.9) = 1.04, p = 0.3, d = 0.169], meaning the means of the two populations are the same.
+
+Note: To meet the normality assumption not met in the original data, a sqrt transformation was attempted. While the transformation improved the distribution of the data to normality, it provided no meaningful differences as it led to the same conclusion. Therefore, the analysis was done on the original data.
+
+<div style="margin-bottom:18px;">
+```{r q2}
+gapminder_post1990 <- complete_rec %>%
+  filter(Year > 1990, continent %in% c("Europe", "Asia")) %>%
+  select(Year, continent, `Imports of goods and services (% of GDP)`)
+
+# qqplot
+ggqqplot(gapminder_post1990, x = "Imports of goods and services (% of GDP)", facet.by = "continent")
+
+
+# welch t test
+t.test <- gapminder_post1990 %>% 
+  t_test(`Imports of goods and services (% of GDP)` ~ continent) %>%
+  add_significance()
+t.test
+
+# cohen's d
+gapminder_post1990 %>% cohens_d(`Imports of goods and services (% of GDP)` ~ continent, var.equal = FALSE)
+
+# summary stats
+gapminder_post1990 %>%
+  group_by(continent) %>%
+  get_summary_stats(`Imports of goods and services (% of GDP)`, type = "mean_sd")
+
+```
+
+</div>
+
+
+### Q: What is the country (or countries) that has the highest `'Population density (people per sq. km of land area)'` across all years? (i.e., which country has the highest average ranking in this category across each time point in the dataset?)
+
+A: The country with the highest average ranking in `'Population density (people per sq. km of land area)'` across all years is Macao SAR, China, followed by Monaco.
+
+```{r q3}
+gapminder_density_overall <- gapminder %>%
+  group_by(`Country Name`) %>%
+  summarize(mean_pop_density = mean(`Population density (people per sq. km of land area)`)) %>%
+  top_n(5, mean_pop_density) 
+
+gapminder_density_overall
+
+ggplot(gapminder_density_overall, aes(x = reorder(`Country Name`,
+                                              -mean_pop_density), 
+                                  y = mean_pop_density)) +
+  geom_bar(color = "red", fill = "orange", alpha = 0.2, width = 0.7, stat = "identity") +
+  theme_classic() +
+  labs(
+    title = "Countries with the Highest Average Population Density",
+    x = "Country Name",
+    y = "Average Population Density",
+    caption = "Source from Gapminder"
+  )
+```
+
+
+### Q: What country (or countries) has shown the greatest increase in `'Life expectancy at birth, total (years)'` since 1962?
+
+A: Cambodia has had the greatest increase (2.44) in `'Life expectancy at birth, total (years)'`.
+
+```{r q4}
+gapminder_life_expect <- gapminder %>%
+  filter(Year > 1962) %>%
+  arrange(Year) %>%
+  group_by(`Country Name`) %>%
+  mutate(diff_yr = Year - lag(Year),
+         diff_life_expect = `Life expectancy at birth, total (years)` - lag(`Life expectancy at birth, total (years)`),
+         rate_per_life = (diff_life_expect / diff_yr)/lag(`Life expectancy at birth, total (years)`) * 100) %>%
+  summarize(avg_rate_life_expect = mean(rate_per_life, na.rm = TRUE)) %>%
+  top_n(5, avg_rate_life_expect)  
+
+gapminder_life_expect
+
+ggplot(gapminder_life_expect, aes(x = reorder(`Country Name`,
+                                              -avg_rate_life_expect), 
+                                  y = avg_rate_life_expect)) +
+  geom_bar(color = "red", fill = "orange", alpha = 0.2, width = 0.7, stat = "identity") +
+  theme_classic() +
+  labs(
+    title = "Countries with the Greatest Increase in Life Expectancy since 1962",
+    x = "Country Name",
+    y = "Average Life Expectancy Percent Rate",
+    caption = "Source from Gapminder"
+  )
+```
+</div>
