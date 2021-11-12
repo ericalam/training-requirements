@@ -184,31 +184,29 @@ ggplotly(ggplot(dataset_imports_year, aes(continent, `Imports of goods and servi
 ```{r highest_pop_density_res}
 # filter data for largest avg ranking
 dataset_pop <- dataset %>% 
-  group_by(Year) %>% 
-  select(Year, `Country Name`, `Population density (people per sq. km of land area)`) %>% 
-  slice_max(n = 5, `Population density (people per sq. km of land area)`) %>%
-  mutate(rank = dense_rank(desc(`Population density (people per sq. km of land area)`))) %>%
-  group_by(`Country Name`) %>%
-  mutate(avg_rank = mean(rank)) %>%
-  arrange(desc(avg_rank))
+  group_by(`Country Name`) %>% 
+  summarize(mean_pop_density = mean(`Population density (people per sq. km of land area)`)) %>%
+  top_n(5, mean_pop_density) %>%
+  arrange(desc(mean_pop_density))
 ```
 
-The country with the highest average ranking of <strong>`r dataset_pop$avg_rank[1]`</strong> in `'Population density (people per sq. km of land area)'` across all years is <strong>`r dataset_pop$'Country Name'[1]`</strong>, followed by <strong>`r dataset_pop$'Country Name'[11]`</strong> with an average ranking of <strong>`r dataset_pop$avg_rank[11]`</strong>.
+The country with the highest average ranking of <strong>`r dataset_pop$mean_pop_density[1]`</strong> in `'Population density (people per sq. km of land area)'` across all years is <strong>`r dataset_pop$'Country Name'[1]`</strong>, followed by <strong>`r dataset_pop$'Country Name'[2]`</strong> with an average ranking of <strong>`r dataset_pop$mean_pop_density[2]`</strong>.
 
 ```{r highest_pop_density_plot}
 # plot top 5 pop density avg ranking countries
-ggplotly(ggplot(dataset_pop, aes(x = reorder(`Country Name`, -avg_rank), y = avg_rank, fill = `Population density (people per sq. km of land area)`, text = paste("Average rank:", avg_rank,"<br>", "Year:", Year))) + 
-  scale_fill_distiller(palette = "BrBG") +
+ggplotly(ggplot(dataset_pop, aes(x = reorder(`Country Name`, -mean_pop_density), y = mean_pop_density, fill = `Country Name`, text = paste("Average rank:", mean_pop_density))) + 
   list(geom_col(),
+  scale_fill_brewer(palette = "Set2"),
   theme_classic(), 
   theme(plot.title = element_text(size = 10.5), 
-        axis.text.x = element_text(angle = 45, hjust = 0)),
+        axis.text.x = element_text(angle = 45, hjust = 0),
+        legend.position = "none"),
   labs(
     caption = paste("Source from", params$data),
     x = "Country name",
     y = "Average ranking",
-    title = "Top 5 countries with the highest population density average ranking from 1967 to 2007") 
-  ), tooltip = c("text", "fill")
+    title = "Top 5 countries with the highest population density average ranking across all years")
+  ), tooltip = c("text")
 )
 ```
 
@@ -230,11 +228,13 @@ The country with the greatest increase in life expectancy at birth since `r para
 
 ```{r highest_life_expect_plot}
 # plot 5 countries with the greatest increases in life expectancy rate
-ggplotly(ggplot(life_expect, aes(x = reorder(`Country Name`, -total_life), y = total_life, text = paste("Increased life expectancy rate:", total_life))) + 
-  list(geom_col(fill = "gray"),
+ggplotly(ggplot(life_expect, aes(x = reorder(`Country Name`, -total_life), y = total_life, fill = `Country Name`, text = paste("Increased life expectancy rate:", total_life))) + 
+  list(geom_col(),
+  scale_fill_brewer(palette = "Set2"),
   theme_classic(), 
   theme(plot.title = element_text(size = 10.5), 
-        axis.text.x = element_text(angle = 45, hjust = 0)),
+        axis.text.x = element_text(angle = 45, hjust = 0),
+        legend.position = "none"),
   labs(
     caption = paste("Source from", params$data),
     x = "Country name",
