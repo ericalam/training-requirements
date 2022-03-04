@@ -7,7 +7,7 @@ library(ggthemes)
 library(shinyWidgets)
 
 # read in data
-data0 <- read.csv(here::here("data", "gapminder_clean.csv"))
+data0 <- read.csv(here::here("gapminder_clean.csv"))
 
 # remove 'X' column, remove NA cases, and rename the rest of columns for legibility
 data <- data0 %>%
